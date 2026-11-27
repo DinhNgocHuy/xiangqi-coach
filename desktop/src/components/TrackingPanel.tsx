@@ -69,8 +69,23 @@ export function TrackingPanel({ videoRef, sharing, s, onOrientation }: {
       await latest.current.s.refresh();
       return;
     }
+    if (auto && r.result === "inconsistent" && "fen_placement" in pos) return resync(id, pos.fen_placement);
     setResult({ sessionId: id, r });
     if (r.result === "recorded") await latest.current.s.refresh();
+  }
+
+  /**
+   * Auto mode lost the game (a new game was started, or several plies happened between two frames): end the old
+   * session (its moves stay saved) and follow on from the board as seen. ponytail: mid-game, the side to move is
+   * guessed as the player's (a bot replies at once); a wrong guess self-heals at the next inconsistent position.
+   */
+  async function resync(oldId: string, placement: string) {
+    const cur = latest.current.s;
+    const fresh = placement === START_PLACEMENT;
+    await api.endSession(oldId).catch(() => undefined); // a failure only leaves the old session marked active
+    await cur.create(fresh ? START_FEN : `${placement} ${cur.playerSide} - - 0 1`, cur.playerSide);
+    setResult(null);
+    setInfo(fresh ? "Phát hiện ván mới: đã tạo buổi tập mới." : "Mất dấu ván cờ (có nước bị bỏ lỡ): đã theo dõi tiếp từ thế cờ hiện tại trong một buổi tập mới.");
   }
 
   async function manual(fn: () => Promise<void>) {
