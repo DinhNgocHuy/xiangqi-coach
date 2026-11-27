@@ -7,7 +7,7 @@ import { grabFrameBlob } from "../services/screenCapture";
 import type { BoardResult, Orientation, Placement, PositionResult } from "../types/api";
 import { BoardEditor } from "./BoardEditor";
 
-export const AUTO_INTERVAL_MS = 1500;
+export const AUTO_INTERVAL_MS = 800; // a bot replies within ~1 s; recognition takes ~200 ms
 const btn = "rounded-md px-3 py-1.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-40";
 const RESULT = { recorded: "Đã ghi nước đi", unchanged: "Thế cờ không đổi", inconsistent: "Không khớp với ván đang theo dõi" } as const;
 const NEED_START = "Chưa hiệu chỉnh quân cờ: hãy mở một ván mới (thế cờ ban đầu, đủ 32 quân), app sẽ tự hiệu chỉnh.";
@@ -21,7 +21,7 @@ export function TrackingPanel({ videoRef, sharing, s, onOrientation }: {
   onOrientation: (o: Orientation) => void;
 }) {
   const [busy, setBusy] = useState(false);
-  const [auto, setAuto] = useState(false);
+  const [auto, setAuto] = useState(true); // on by default: it waits for sharing and a starting position by itself
   const [board, setBoard] = useState<BoardResult | null>(null);
   const [version, setVersion] = useState(0); // remounts the editor on each new recognition
   // The session id is kept with the result so a suggestion is never confirmed into another session.
@@ -55,11 +55,20 @@ export function TrackingPanel({ videoRef, sharing, s, onOrientation }: {
     if (r.orientation) latest.current.onOrientation(r.orientation);
   }
 
-  async function submit(pos: { fen_placement: string } | { placement: Placement }, signal?: AbortSignal) {
+  async function submit(pos: { fen_placement: string } | { placement: Placement }, signal?: AbortSignal, auto = false) {
     const id = latest.current.s.session?.id;
     if (!id) throw new Error("Hãy tạo buổi tập trước khi ghi thế cờ.");
     const r = await api.submitPosition(id, pos, signal);
     if (signal?.aborted) return;
+    if (auto && r.result === "inconsistent" && r.suggestion) {
+      // A fast opponent (a bot) replied between two frames. The backend only suggests a line when it is the
+      // unique legal 2-ply match, so auto mode records it. A failure mid-way self-heals: the next frame is 1 ply.
+      for (const uci of r.suggestion) await api.addMove(id, uci);
+      setResult(null);
+      setInfo(`Đã ghi 2 nước: ${r.suggestion.join(" ")}`);
+      await latest.current.s.refresh();
+      return;
+    }
     setResult({ sessionId: id, r });
     if (r.result === "recorded") await latest.current.s.refresh();
   }
@@ -146,7 +155,7 @@ export function TrackingPanel({ videoRef, sharing, s, onOrientation }: {
         stability.current = step.state;
         if (step.submit) {
           try {
-            await submit({ fen_placement: step.submit }, signal);
+            await submit({ fen_placement: step.submit }, signal, true);
           } catch (e) {
             stability.current = { ...stability.current, submitted: null }; // retry this position next frame
             throw e;
