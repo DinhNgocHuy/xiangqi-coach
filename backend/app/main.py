@@ -86,6 +86,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.engine = EngineManager(settings, conn)
             yield
         finally:
+            close = getattr(getattr(app.state, "coach_provider", None), "aclose", None)
+            if close is not None:  # HTTP clients of the cached LLM provider
+                await close()
             if hasattr(app.state, "engine"):
                 await app.state.engine.close()
             conn.close()

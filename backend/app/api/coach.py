@@ -2,7 +2,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 
-from app.services.coach.coach import CoachRequest, CoachResponse, coach_move
+from app.services.coach.coach import NO_PROVIDER, CoachRequest, CoachResponse, coach_move
 from app.services.coach.llm import LLMProvider, make_provider
 from app.services.rules import xiangqi as rules
 
@@ -20,7 +20,7 @@ def _provider(request: Request) -> LLMProvider | None:
 def status(request: Request) -> dict[str, Any]:
     p = _provider(request)
     if p is None:
-        return {"available": False, "provider": None, "model": None, "reason": "Chưa cấu hình XQC_LLM_API_KEY."}
+        return {"available": False, "provider": None, "model": None, "reason": NO_PROVIDER + "."}
     return {"available": True, "provider": p.name, "model": p.model, "reason": None}
 
 

@@ -84,6 +84,7 @@ export type CoachResponse = {
   feedback: CoachFeedback | null;
   guard: { removed: number; illegal_variations: number; truncated: number };
   model: string | null;
+  provider: string | null;
 };
 
 export type Mistake = { id: number; session_id: string; move_number: number; component: string; description: string; fen: string; created_at: string };

@@ -38,7 +38,7 @@ export function CoachPanel({ review }: { review: MoveReview }) {
       {res && (
         <div className="space-y-2 text-sm">
           <p className="text-xs text-slate-500">
-            Nguồn: {res.source === "llm" ? `AI (${res.model ?? "LLM"})` : "theo luật"}
+            Nguồn: {res.source === "llm" ? `AI (${[res.provider, res.model].filter(Boolean).join(" · ") || "LLM"})` : "theo luật"}
             {res.source === "llm" && ` · bộ lọc: loại ${res.guard.removed} câu có nước lạ, ${res.guard.illegal_variations} câu có biến sai luật, cắt ${res.guard.truncated} mục`}
           </p>
           {!res.available || !f ? (

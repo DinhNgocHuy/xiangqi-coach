@@ -12,6 +12,7 @@ ENV_PREFIX = "XQC_"
 HOST = "127.0.0.1"  # never configurable: the backend must not listen on other interfaces
 DEFAULT_PORT = 8765
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+LLM_PROVIDERS = ("anthropic", "huggingface", "none")
 
 
 def default_db_path(env: Mapping[str, str] | None = None, platform: str | None = None) -> Path:
@@ -31,6 +32,9 @@ class Settings:
     pikafish_path: Path | None = None
     llm_api_key: str | None = field(default=None, repr=False)  # repr=False keeps it out of logs/tracebacks
     llm_model: str | None = None
+    llm_provider: str | None = None  # None = auto: anthropic if llm_api_key, else huggingface if hf_token
+    hf_token: str | None = field(default=None, repr=False)
+    hf_model: str | None = None
     log_level: str = "INFO"
     engine_threads: int = field(default_factory=lambda: min(2, os.cpu_count() or 1))
     engine_hash_mb: int = 128
@@ -59,6 +63,10 @@ class Settings:
         if log_level not in LOG_LEVELS:
             raise ValueError(f"{ENV_PREFIX}LOG_LEVEL must be one of {LOG_LEVELS}, got {log_level!r}")
 
+        llm_provider = (get("LLM_PROVIDER") or "").lower() or None
+        if llm_provider is not None and llm_provider not in LLM_PROVIDERS:
+            raise ValueError(f"{ENV_PREFIX}LLM_PROVIDER must be one of {LLM_PROVIDERS}, got {llm_provider!r}")
+
         def get_int(name: str, default: int, lo: int, hi: int) -> int:
             raw = get(name)
             try:
@@ -78,6 +86,9 @@ class Settings:
             pikafish_path=Path(pikafish).expanduser() if pikafish else None,
             llm_api_key=get("LLM_API_KEY"),
             llm_model=get("LLM_MODEL"),
+            llm_provider=llm_provider,
+            hf_token=get("HF_TOKEN"),
+            hf_model=get("HF_MODEL"),
             log_level=log_level,
             engine_threads=get_int("ENGINE_THREADS", defaults.engine_threads, 1, 64),
             engine_hash_mb=get_int("ENGINE_HASH_MB", defaults.engine_hash_mb, 1, 4096),

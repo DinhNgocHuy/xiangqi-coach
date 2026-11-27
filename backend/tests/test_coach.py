@@ -9,7 +9,15 @@ from fastapi.testclient import TestClient
 from app.core.config import Settings
 from app.main import create_app
 from app.services.coach.coach import FEEDBACK_SCHEMA, CoachRequest, coach_move
-from app.services.coach.llm import AnthropicProvider, FakeProvider, ProviderError, make_provider
+from app.services.coach import coach, llm
+from app.services.coach.llm import (
+    HF_URL,
+    AnthropicProvider,
+    FakeProvider,
+    HuggingFaceProvider,
+    ProviderError,
+    make_provider,
+)
 from app.services.rules.xiangqi import START_FEN
 
 ENGINE = {
@@ -110,6 +118,7 @@ def test_provider_error_and_no_key_fall_back_to_rules() -> None:
     assert (res.source, res.available, res.reason) == ("rules", False, "LLM không phản hồi kịp.")
     res = asyncio.run(coach_move(_req(), None))
     assert res.source == "rules" and not res.available and "XQC_LLM_API_KEY" in res.reason
+    assert "XQC_HF_TOKEN" in res.reason and res.provider is None
     assert make_provider(Settings()) is None
 
 
@@ -164,7 +173,7 @@ def test_anthropic_provider_request_shape() -> None:
     assert "sk-secret" not in repr(_anthropic(ok))
 
 
-def _raises(provider: AnthropicProvider, needle: str) -> None:
+def _raises(provider, needle: str) -> None:
     try:
         asyncio.run(provider.complete("S", "U", 10))
     except ProviderError as e:
@@ -212,3 +221,146 @@ def test_api_status_and_feedback(tmp_path: Path) -> None:
         r = client.post("/coach/move-feedback", json=body)
         assert r.json()["source"] == "llm" and r.json()["feedback"]["did_well"]
         assert client.post("/coach/move-feedback", json=body | {"player_move": "a0a5"}).status_code == 400
+
+
+def test_make_provider_selection() -> None:
+    both = {"llm_api_key": "sk-secret", "hf_token": "hf_secret"}
+    assert isinstance(make_provider(Settings(**both)), AnthropicProvider)  # auto: Anthropic key wins
+    hf = make_provider(Settings(hf_token="hf_secret"))
+    assert isinstance(hf, HuggingFaceProvider) and hf.model == llm.HF_DEFAULT_MODEL
+    assert make_provider(Settings(**both, llm_provider="huggingface", hf_model="m:fastest")).model == "m:fastest"
+    assert make_provider(Settings(**both, llm_provider="none")) is None
+    assert make_provider(Settings(llm_api_key="sk-secret", llm_provider="huggingface")) is None  # selected but no token
+    assert make_provider(Settings(hf_token="hf_secret", llm_provider="anthropic")) is None
+
+
+def _completion(content) -> dict:
+    return {"id": "c1", "object": "chat.completion", "model": "m", "choices": [
+        {"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": content}}]}
+
+
+def _hf(handler) -> HuggingFaceProvider:
+    return HuggingFaceProvider("hf_secret", "Qwen/Qwen3-235B-A22B-Instruct-2507", transport=httpx2.MockTransport(handler))
+
+
+def test_hf_provider_request_shape_and_parse() -> None:
+    seen = []
+
+    def ok(request: httpx2.Request) -> httpx2.Response:
+        seen.append(request)
+        return httpx2.Response(200, json=_completion("<think>hmm</think>" + _answer()))
+
+    out = asyncio.run(_hf(ok).complete("S", "U", 16000, FEEDBACK_SCHEMA))
+    assert json.loads(out)["did_well"]  # inline <think> block stripped
+    req = seen[0]
+    body = json.loads(req.content)
+    assert str(req.url) == HF_URL == "https://router.huggingface.co/v1/chat/completions" and req.method == "POST"
+    assert req.headers["authorization"] == "Bearer hf_secret"
+    assert body["model"] == "Qwen/Qwen3-235B-A22B-Instruct-2507" and body["max_tokens"] == 2048  # capped
+    assert body["messages"] == [{"role": "system", "content": "S"}, {"role": "user", "content": "U"}]
+    assert body["response_format"] == {
+        "type": "json_schema", "json_schema": {"name": "coach_feedback", "schema": FEEDBACK_SCHEMA, "strict": True}}
+    asyncio.run(_hf(ok).complete("S", "U", 10))
+    assert "response_format" not in json.loads(seen[1].content)
+    assert "hf_secret" not in repr(_hf(ok))
+
+
+def test_hf_provider_strips_unclosed_think_blocks() -> None:
+    for content in ("thoughts</think>" + _answer(), _answer() + "<think>cut off by max_tok",
+                    "<think>a</think>" + _answer() + "<think>b"):
+        out = asyncio.run(_hf(lambda r, c=content: httpx2.Response(200, json=_completion(c))).complete("S", "U", 10))
+        assert json.loads(out)["did_well"], content
+
+
+def test_hf_provider_structured_output_unsupported_retries_without_it(caplog) -> None:
+    bodies = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        bodies.append(json.loads(request.content))
+        if "response_format" in bodies[-1]:
+            return httpx2.Response(400, json={"error": {"message": "response_format not supported" + "x" * 500}})
+        return httpx2.Response(200, json=_completion(_answer()))
+
+    assert json.loads(asyncio.run(_hf(handler).complete("S", "U", 10, FEEDBACK_SCHEMA)))["questions"]
+    assert len(bodies) == 2 and "response_format" not in bodies[1]
+    logged = [r.error for r in caplog.records if r.getMessage() == "llm rejected response_format"]
+    assert logged == ["response_format not supported" + "x" * 171]  # truncated to 200 chars
+
+
+def test_hf_provider_errors(monkeypatch) -> None:
+    def status(code: int):
+        return lambda r: httpx2.Response(code, json={"error": "x"})
+
+    def timeout(request: httpx2.Request) -> httpx2.Response:
+        raise httpx2.ConnectTimeout("slow", request=request)
+
+    def offline(request: httpx2.Request) -> httpx2.Response:
+        raise httpx2.ConnectError("down", request=request)
+
+    cases = [
+        (status(401), "Token Hugging Face"),
+        (status(403), "thiếu quyền Inference Providers"),
+        (status(402), "hết hạn mức Hugging Face"),
+        (status(429), "tần suất"),
+        (status(503), "quá tải"),
+        (status(404), "HTTP 404"),
+        (timeout, "hết thời gian"),
+        (offline, "Không kết nối"),
+        (lambda r: (_ for _ in ()).throw(httpx2.DecodingError("bad gzip", request=r)), "Không kết nối"),
+        (lambda r: (_ for _ in ()).throw(httpx2.TooManyRedirects("loop", request=r)), "Không kết nối"),
+    ]
+    for handler, needle in cases:
+        _raises(_hf(handler), needle)
+
+    async def slow(request: httpx2.Request) -> httpx2.Response:
+        await asyncio.sleep(1)
+        return httpx2.Response(200, json=_completion(_answer()))
+
+    monkeypatch.setattr(llm, "TIMEOUT_S", 0.05)  # total-time budget, independent of httpx2 per-phase timeouts
+    _raises(_hf(slow), "hết thời gian")
+
+
+def test_hf_provider_unreadable_body_returns_empty() -> None:
+    for resp in (httpx2.Response(200, text="<html>"), httpx2.Response(200, json={"choices": []}),
+                 httpx2.Response(200, json=_completion(None))):
+        assert asyncio.run(_hf(lambda r, resp=resp: resp).complete("S", "U", 10)) == ""
+
+
+def test_coach_end_to_end_with_hf_provider(tmp_path: Path) -> None:
+    replies = iter(["không phải JSON", _answer(why_it_matters="Engine chọn h2e2 tốt hơn. Mất 60 cp.")])
+    app = create_app(Settings(db_path=tmp_path / "coach.db"))
+    provider = app.state.coach_provider = _hf(lambda r: httpx2.Response(200, json=_completion(next(replies))))
+    with TestClient(app) as client:
+        status = client.get("/coach/status").json()
+        assert status == {"available": True, "provider": "huggingface",
+                          "model": "Qwen/Qwen3-235B-A22B-Instruct-2507", "reason": None}
+        r = client.post("/coach/move-feedback", json=_req().model_dump()).json()
+    assert r["source"] == "llm" and r["provider"] == "huggingface" and r["model"] == status["model"]
+    assert r["feedback"]["why_it_matters"] == "Mất 60 cp." and r["guard"]["removed"] == 1  # guard still applies
+    assert provider._client.is_closed  # lifespan shutdown closes the cached provider's HTTP client
+
+
+class _Slow:
+    name, model = "slow", "slow"
+
+    async def complete(self, system, user, max_tokens, schema=None) -> str:
+        await asyncio.sleep(1)
+        return _answer()
+
+
+class _Buggy:
+    name, model = "buggy", "buggy"
+
+    async def complete(self, system, user, max_tokens, schema=None) -> str:
+        raise KeyError("secret prompt text")
+
+
+def test_coach_overall_deadline_and_unexpected_errors_fall_back(monkeypatch, caplog) -> None:
+    monkeypatch.setattr(coach, "COACH_DEADLINE_S", 0.05)
+    res = asyncio.run(coach_move(_req(), _Slow()))
+    assert (res.source, res.available, res.provider) == ("rules", False, "slow") and "hết thời gian" in res.reason
+    res = asyncio.run(coach_move(_req(), _Buggy()))
+    assert (res.source, res.available) == ("rules", False) and "không mong đợi" in res.reason
+    failures = [r for r in caplog.records if r.getMessage() == "coach provider failure"]
+    assert failures and failures[0].error_type == "KeyError"
+    assert not any("secret prompt text" in str(r.__dict__) for r in caplog.records)

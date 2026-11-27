@@ -58,7 +58,7 @@ function BackendLines({ b }: { b: BackendStatus }) {
     <ul role="status" className="space-y-1 text-xs text-slate-400">
       <Line ok={b.health.status === "ok"} label={b.health.status === "ok" ? "Backend: sẵn sàng" : "Backend: lỗi cơ sở dữ liệu"} />
       <Line ok={b.engine?.available ?? null} label={b.engine?.available ? "Pikafish: sẵn sàng" : "Pikafish: chưa có"} title={b.engine?.message ?? b.engine?.last_error ?? undefined} />
-      <Line ok={b.coach?.available ?? null} label={b.coach?.available ? `AI Coach: ${b.coach.model ?? "bật"}` : "AI Coach: tắt"} title={b.coach?.reason ?? undefined} />
+      <Line ok={b.coach?.available ?? null} label={b.coach?.available ? `AI Coach: ${[b.coach.provider, b.coach.model].filter(Boolean).join(" · ") || "bật"}` : "AI Coach: tắt"} title={b.coach?.reason ?? undefined} />
     </ul>
   );
 }

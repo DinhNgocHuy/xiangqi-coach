@@ -16,6 +16,7 @@ source="rules" so the frontend keeps its rule-based text. The coach never fakes 
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -23,12 +24,15 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from app.services.coach.llm import LLMProvider, ProviderError
+from app.services.coach.llm import ERR_TIMEOUT, LLMProvider, ProviderError
 from app.services.rules import xiangqi as rules
 
 log = logging.getLogger(__name__)
 
 MAX_TOKENS = 16000  # room for always-on thinking (Opus 5.5) plus the short JSON reply
+# One deadline for the whole LLM phase (malformed-JSON retry, HF resend without response_format: up to 4 POSTs),
+# below the desktop's 90 s SLOW_MS.
+COACH_DEADLINE_S = 75.0
 MAX_TEXT = 600
 LIST_LIMITS = {"did_well": 3, "missed": 3, "questions": 3}
 TEXT_FIELDS = ("why_it_matters", "what_to_learn", "next_exercise")
@@ -133,6 +137,7 @@ class CoachResponse(BaseModel):
     feedback: Feedback | None = None
     guard: GuardStats = Field(default_factory=GuardStats)
     model: str | None = None
+    provider: str | None = None
 
 
 SYSTEM_PROMPT = """Bạn là huấn luyện viên tư duy cờ Tướng. Bạn nhận dữ liệu JSON về MỘT nước đi của người chơi.
@@ -255,32 +260,53 @@ def guard_feedback(req: CoachRequest, fb: Feedback) -> tuple[Feedback, GuardStat
     return out, g.stats
 
 
-def _rules(reason: str, available: bool, model: str | None = None, guard: GuardStats | None = None) -> CoachResponse:
-    return CoachResponse(source="rules", available=available, reason=reason, model=model, guard=guard or GuardStats())
+NO_PROVIDER = "Chưa cấu hình LLM (XQC_LLM_API_KEY hoặc XQC_HF_TOKEN)"
+
+
+def _rules(
+    reason: str, available: bool, provider: LLMProvider | None = None, guard: GuardStats | None = None
+) -> CoachResponse:
+    return CoachResponse(
+        source="rules",
+        available=available,
+        reason=reason,
+        model=provider.model if provider else None,
+        provider=provider.name if provider else None,
+        guard=guard or GuardStats(),
+    )
 
 
 async def coach_move(req: CoachRequest, provider: LLMProvider | None) -> CoachResponse:
     """Raises rules.FenError / rules.IllegalMoveError on a bad position or move (checked before any LLM call)."""
     rules.apply_move(req.board_before, req.player_move)
     if provider is None:
-        return _rules("Chưa cấu hình XQC_LLM_API_KEY; dùng nhận xét theo quy tắc.", available=False)
+        return _rules(NO_PROVIDER + "; dùng nhận xét theo quy tắc.", available=False)
     system, user = build_prompt(req)
     fb = None
     try:
-        for attempt in range(2):
-            if attempt:
-                user += "\n\nLần trước bạn không trả về JSON hợp lệ. Chỉ trả về đúng một đối tượng JSON."
-            fb = _parse(await provider.complete(system, user, MAX_TOKENS, FEEDBACK_SCHEMA))
-            if fb is not None:
-                break
+        async with asyncio.timeout(COACH_DEADLINE_S):
+            for attempt in range(2):
+                if attempt:
+                    user += "\n\nLần trước bạn không trả về JSON hợp lệ. Chỉ trả về đúng một đối tượng JSON."
+                fb = _parse(await provider.complete(system, user, MAX_TOKENS, FEEDBACK_SCHEMA))
+                if fb is not None:
+                    break
     except ProviderError as e:
         log.warning("coach provider error", extra={"provider": provider.name, "reason": str(e)})
-        return _rules(str(e), available=False, model=provider.model)
+        return _rules(str(e), available=False, provider=provider)
+    except TimeoutError:
+        log.warning("coach provider error", extra={"provider": provider.name, "reason": "deadline"})
+        return _rules(ERR_TIMEOUT, available=False, provider=provider)
+    except Exception as e:  # a provider bug must not turn into a 500; the type only, the message may hold data
+        log.warning("coach provider failure", extra={"provider": provider.name, "error_type": type(e).__name__})
+        return _rules("Lỗi không mong đợi khi gọi LLM; dùng nhận xét theo quy tắc.", available=False, provider=provider)
     if fb is None:
-        return _rules("LLM trả về dữ liệu không hợp lệ; dùng nhận xét theo quy tắc.", True, provider.model)
+        return _rules("LLM trả về dữ liệu không hợp lệ; dùng nhận xét theo quy tắc.", True, provider)
 
     fb, stats = guard_feedback(req, fb)
-    log.info("coach feedback", extra={"model": provider.model, **stats.model_dump()})
+    log.info("coach feedback", extra={"provider": provider.name, "model": provider.model, **stats.model_dump()})
     if not any(getattr(fb, k) for k in (*LIST_LIMITS, *TEXT_FIELDS)):
-        return _rules("Nhận xét của LLM bị bộ lọc loại hết; dùng nhận xét theo quy tắc.", True, provider.model, stats)
-    return CoachResponse(source="llm", available=True, feedback=fb, guard=stats, model=provider.model)
+        return _rules("Nhận xét của LLM bị bộ lọc loại hết; dùng nhận xét theo quy tắc.", True, provider, stats)
+    return CoachResponse(
+        source="llm", available=True, feedback=fb, guard=stats, model=provider.model, provider=provider.name
+    )

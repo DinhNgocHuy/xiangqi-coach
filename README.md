@@ -45,7 +45,7 @@ python3 -m venv .venv
 .venv/bin/pytest -q -m "not slow"      # bỏ test chậm
 ```
 
-Cấu hình qua biến môi trường tiền tố `XQC_` (xem `backend/.env.example`): `XQC_PORT`, `XQC_DB_PATH` (mặc định `%APPDATA%\XiangqiCoach\coach.db` trên Windows, `~/.local/share/xiangqi-coach/coach.db` trên Linux), `XQC_PIKAFISH_PATH`, `XQC_LLM_API_KEY`, `XQC_LLM_MODEL`, `XQC_LOG_LEVEL`.
+Cấu hình qua biến môi trường tiền tố `XQC_` (xem `backend/.env.example`): `XQC_PORT`, `XQC_DB_PATH` (mặc định `%APPDATA%\XiangqiCoach\coach.db` trên Windows, `~/.local/share/xiangqi-coach/coach.db` trên Linux), `XQC_PIKAFISH_PATH`, `XQC_LLM_PROVIDER`, `XQC_LLM_API_KEY`, `XQC_LLM_MODEL`, `XQC_HF_TOKEN`, `XQC_HF_MODEL`, `XQC_LOG_LEVEL`.
 
 ### Pikafish (engine, GĐ4)
 
@@ -66,7 +66,9 @@ API: `GET /engine/status`, `POST /engine/analyze`, `POST /engine/evaluate-move` 
 
 ### AI Thinking Coach (GĐ5, tùy chọn)
 
-Coach dùng LLM (Anthropic) để diễn giải kết quả Move Review bằng lời. Không bắt buộc: không có key thì ứng dụng vẫn dùng nhận xét theo quy tắc.
+Coach dùng LLM để diễn giải kết quả Move Review bằng lời. Hai nhà cung cấp: **Anthropic** (Claude) hoặc **Hugging Face Inference Providers** (model mở như Qwen, Llama qua API đám mây). Không bắt buộc: không có key/token thì ứng dụng vẫn dùng nhận xét theo quy tắc. Chọn bằng `XQC_LLM_PROVIDER` = `anthropic` | `huggingface` | `none`; để trống thì tự chọn: Anthropic nếu có `XQC_LLM_API_KEY`, không thì Hugging Face nếu có `XQC_HF_TOKEN`, không thì tắt.
+
+Anthropic:
 
 ```powershell
 $env:XQC_LLM_API_KEY = "<key của bạn>"   # bash: export XQC_LLM_API_KEY=...
@@ -74,7 +76,20 @@ $env:XQC_LLM_MODEL = "claude-opus-5-5"   # tùy chọn, đây là mặc định
 .venv\Scripts\python -m app
 ```
 
-Không ghi key vào file được commit. Dữ liệu gửi cho LLM **chỉ là văn bản**: FEN, nước đi, điểm engine, điểm/nhận xét theo quy tắc và câu trả lời tự đánh giá của bạn — **không gửi ảnh**. Mặc định không gửi nước tốt nhất/biến của engine. Mọi câu trả lời của LLM đi qua bộ lọc: câu nhắc nước đi không có trong dữ liệu hoặc biến sai luật bị loại. API: `GET /coach/status`, `POST /coach/move-feedback` (xem `docs/ARCHITECTURE.md` §7). Đã nối với Move Review (nút **Nhận xét AI Coach**); chưa thử với API thật.
+Hugging Face Inference Providers:
+
+1. Vào [Settings → Access Tokens](https://huggingface.co/settings/tokens/new?ownUserPermissions=inference.serverless.write&tokenType=fineGrained), tạo token loại **fine-grained** có quyền **"Make calls to Inference Providers"** (theo [tài liệu](https://huggingface.co/docs/inference-providers/index#authentication)).
+2. Đặt biến môi trường rồi chạy backend:
+
+```powershell
+$env:XQC_HF_TOKEN = "hf_..."                                    # bash: export XQC_HF_TOKEN=...
+$env:XQC_HF_MODEL = "Qwen/Qwen3-235B-A22B-Instruct-2507"         # tùy chọn, đây là mặc định
+.venv\Scripts\python -m app
+```
+
+`XQC_HF_MODEL` nhận mọi model chat có trên [danh sách Inference Providers](https://huggingface.co/models?inference_provider=all), có thể thêm hậu tố `:fastest` (nhanh nhất), `:cheapest` (rẻ nhất) hoặc `:<tên nhà cung cấp>` (chỉ nhà cung cấp đó). **Chi phí** ([Pricing](https://huggingface.co/docs/inference-providers/pricing)): tính theo giá của nhà cung cấp, không cộng thêm phí; tài khoản PRO và tổ chức Team/Enterprise có $2.00 credits/tháng (mỗi seat), tài khoản miễn phí **không** có credits hằng tháng mà phải mua credits trước. Hết credits → API trả 402, coach báo "Đã hết hạn mức Hugging Face" và giữ nhận xét theo quy tắc. Model mở nhỏ dễ bịa nước đi hơn; bộ lọc bên dưới vẫn áp dụng y nguyên.
+
+Không ghi key/token vào file được commit. Dữ liệu gửi cho LLM (cả hai nhà cung cấp) **chỉ là văn bản**: FEN, nước đi, điểm engine, điểm/nhận xét theo quy tắc và câu trả lời tự đánh giá của bạn — **không gửi ảnh**. Mặc định không gửi nước tốt nhất/biến của engine. Mọi câu trả lời của LLM đi qua bộ lọc: câu nhắc nước đi không có trong dữ liệu hoặc biến sai luật bị loại. API: `GET /coach/status`, `POST /coach/move-feedback` (xem `docs/ARCHITECTURE.md` §7). Đã nối với Move Review (nút **Nhận xét AI Coach**); chưa thử với API thật.
 
 ## Đóng gói bộ cài Windows
 
@@ -109,7 +124,7 @@ Cần backend đang chạy (bộ cài tự chạy; khi dev: `cd backend && .venv
    - **Thủ công**: **Nhận diện bàn cờ** → bàn cờ hiện ra, ô viền vàng là ô chưa chắc chắn; bấm ô để chọn quân/ô trống, rồi **Xác nhận thế cờ**.
    - **Hoàn tác nước cuối** khi ghi nhầm; **Kết thúc buổi tập** khi xong ván.
 5. **Move Review** — danh sách nước **của bạn** chưa đánh giá. Chọn một nước → trả lời phần tự đánh giá (đều không bắt buộc) → **Gửi đánh giá** hoặc **Bỏ qua**. Chỉ sau bước này app mới hỏi Pikafish (`/engine/evaluate-move`), chấm điểm theo quy tắc và lưu nhận xét vào cơ sở dữ liệu. Điểm chiếu hết được hiển thị bằng chữ ("chiếu hết sau N nước"), không tính như centipawn.
-6. **AI Coach (tùy chọn)** — dưới thẻ nhận xét, **Nhận xét AI Coach** gửi dữ liệu dạng văn bản cho LLM (cần `XQC_LLM_API_KEY`). Hiện rõ nguồn (AI hay theo luật) và số câu bị bộ lọc loại. Không có key → hiện lý do, nhận xét theo luật vẫn giữ nguyên.
+6. **AI Coach (tùy chọn)** — dưới thẻ nhận xét, **Nhận xét AI Coach** gửi dữ liệu dạng văn bản cho LLM (cần `XQC_LLM_API_KEY` hoặc `XQC_HF_TOKEN`). Hiện rõ nguồn (AI kèm nhà cung cấp và model, hay theo luật) và số câu bị bộ lọc loại. Không có key → hiện lý do, nhận xét theo luật vẫn giữ nguyên.
 7. **Nhật ký tư duy** — mẫu lỗi lặp lại theo kỹ năng, xu hướng theo tuần, danh sách lỗi gần đây.
 8. **Luyện tập** — **Tạo bài tập từ lỗi của tôi** (cần Pikafish), chọn bài, trả lời bằng nước UCI (ví dụ `h2e2`) hoặc chọn đánh giá thế cờ; app hiện đúng/sai, giải thích và biến của engine.
 9. **Dashboard** — thống kê (tổng buổi, điểm trung bình, lỗi thường gặp, theo tuần, kỹ năng cần cải thiện; hiện "Chưa đủ dữ liệu" khi chưa đủ mẫu), **Xuất dữ liệu (JSON)** và **Sao lưu** (hiện đường dẫn file sao lưu).
