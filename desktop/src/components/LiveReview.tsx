@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { SessionState } from "../hooks/useSession";
 import { api, errorText } from "../services/backend";
 import { buildMoveReview, evalText, fromEvaluation, movePoints } from "../services/moveReview";
 import type { MoveOut } from "../types/api";
-import type { MoveReview, SelfAssessment } from "../types/moveReview";
+import type { EngineAnalysis, MoveExplanation, MoveReview, SelfAssessment } from "../types/moveReview";
 
 const SKIPPED: SelfAssessment = { intention: "", predicted_opponent_reply: "", predicted_variations: [], depth: null, recognized_risks: null, position_assessment: null, skipped: true };
 const SHOWN = 5;
@@ -115,8 +115,9 @@ function ReviewItem({ r }: { r: MoveReview }) {
       <div className="flex flex-wrap items-baseline gap-x-3">
         <span className="font-medium text-slate-200">Nước {r.move_number}: <span className="font-mono">{r.player_move}</span></span>
         <span className={`font-semibold ${color}`}>{score ?? "—"}/100 · {r.move_quality_label}</span>
-        {e && <span className="text-xs text-slate-500">Thế cờ {evalText(e.eval_before_cp, e.eval_before_mate)} → {evalText(e.eval_after_cp, e.eval_after_mate)} · nước tốt nhất <span className="font-mono">{e.best_move}</span></span>}
+        {e && <span className="text-xs text-slate-500">Thế cờ {evalText(e.eval_before_cp, e.eval_before_mate)} → {evalText(e.eval_after_cp, e.eval_after_mate)}</span>}
       </div>
+      {e?.explanation && <Explain e={e} x={e.explanation} />}
       {p && (
         <div className="mt-2 grid gap-2 sm:grid-cols-2">
           <List title="Ưu điểm" items={p.pros} cls="text-emerald-200" />
@@ -124,6 +125,48 @@ function ReviewItem({ r }: { r: MoveReview }) {
         </div>
       )}
     </li>
+  );
+}
+
+const why = (rs: string[]) => (rs.length ? ` (${rs.join(", ")})` : "");
+
+/** Best move and why, the opponent's reply and intent: all facts from the backend (rules + Pikafish). */
+function Explain({ e, x }: { e: EngineAnalysis; x: MoveExplanation }) {
+  const same = x.player_move === x.best_move;
+  const loss = e.cp_loss ?? 0;
+  return (
+    <dl className="mt-2 space-y-1 text-slate-300">
+      <Row label="Bạn đi">{x.player_move}{why(x.player_reasons)}</Row>
+      {!same && (
+        <Row label="Nước tốt nhất">
+          <span className="font-medium text-emerald-200">{x.best_move}</span>
+          {x.best_reasons.length ? why(x.best_reasons) : " (nước phát triển/củng cố, lợi ích nằm ở thế cờ về sau)"}
+          {" "}— engine đánh giá {evalText(e.eval_before_cp, e.eval_before_mate)}, còn sau nước của bạn là {evalText(e.eval_after_cp, e.eval_after_mate)}.
+        </Row>
+      )}
+      {x.opponent_reply && (
+        <Row label={!same && loss > 50 && x.opponent_reply_reasons.length ? "Vì sao nước của bạn kém" : "Đối thủ nên đáp"}>
+          {!same && loss > 50 && x.opponent_reply_reasons.length ? "đối thủ đáp " : ""}{x.opponent_reply}{why(x.opponent_reply_reasons)}
+        </Row>
+      )}
+      {x.opponent_intent && (
+        <Row label="Ý đồ đối thủ">
+          muốn đi {x.opponent_intent}{x.opponent_intent_reasons.length ? why(x.opponent_intent_reasons) : " (chưa có đe dọa trực tiếp)"}
+          {x.intent_handled === true && <span className="text-emerald-300"> — bạn đã hóa giải.</span>}
+          {x.intent_handled === false && <span className="text-amber-300"> — nước của bạn chưa hóa giải đe dọa này.</span>}
+        </Row>
+      )}
+      {x.best_line.length > 1 && <Row label="Biến chính (engine)">{x.best_line.join(" → ")}</Row>}
+    </dl>
+  );
+}
+
+function Row({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div>
+      <dt className="inline text-xs font-semibold uppercase text-slate-500">{label}: </dt>
+      <dd className="inline">{children}</dd>
+    </div>
   );
 }
 

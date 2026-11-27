@@ -94,6 +94,7 @@ export function fromEvaluation(ev: MoveEvaluation): EngineAnalysis {
     cp_loss: ev.cp_loss,
     eval_before_mate: ev.eval_before_mate,
     eval_after_mate: ev.eval_after_mate,
+    explanation: ev.explanation ?? null,
   };
 }
 
@@ -299,10 +300,11 @@ export function movePoints(e: EngineAnalysis, playerMove: string): { pros: strin
   const cons: string[] = [];
   const loss = Math.max(0, e.cp_loss ?? e.eval_before_cp - e.eval_after_cp);
   const change = mateChange(e);
+  const best = e.explanation?.best_move ?? e.best_move;
   if (change) (change.decisive || e.eval_after_cp < 0 ? cons : pros).push(`Nước đi ${change.text}.`);
   if (norm(playerMove) === norm(e.best_move)) pros.push("Trùng với nước tốt nhất của engine.");
-  else if (loss <= 20) pros.push(`Gần ngang nước tốt nhất của engine (${e.best_move}).`);
-  else if (!change?.decisive) cons.push(`Kém nước tốt nhất ${e.best_move} khoảng ${loss} điểm.`);
+  else if (loss <= 20) pros.push(`Gần ngang nước tốt nhất của engine (${best}).`);
+  else if (!change?.decisive) cons.push(`Kém nước tốt nhất ${best} khoảng ${loss} điểm.`);
   if (e.threats.check) cons.push("Sau nước này đối thủ có nước chiếu.");
   if (e.material_at_risk) cons.push("Có quân của bạn có thể bị bắt mất.");
   if (e.threats.counterattack) cons.push("Đối thủ có cơ hội phản công.");

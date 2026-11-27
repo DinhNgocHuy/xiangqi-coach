@@ -1,5 +1,5 @@
 // Shapes of the local FastAPI backend (backend/app/api/*.py, backend/app/schemas/*.py). snake_case on purpose.
-import type { EngineAnalysis, MoveReview } from "./moveReview";
+import type { EngineAnalysis, MoveExplanation, MoveReview } from "./moveReview";
 
 export type Side = "w" | "b";
 export type Square = string | null; // uppercase = Red, lowercase = Black; null = empty
@@ -57,6 +57,7 @@ export type MoveEvaluation = Omit<EngineAnalysis, "source" | "cp_loss" | "eval_b
   depth_requested: number;
   stable: boolean;
   notes: string[];
+  explanation?: MoveExplanation | null;
 };
 
 export type StoredReview = {

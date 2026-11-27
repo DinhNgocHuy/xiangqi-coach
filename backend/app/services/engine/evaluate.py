@@ -16,11 +16,16 @@ Heuristics (deliberately simple, documented so the coach never over-claims):
 
 from __future__ import annotations
 
+import logging
+
 from pydantic import BaseModel
 
+from app.services.engine.explain import MoveExplanation, explain, null_move_fen
 from app.services.engine.manager import DEFAULT_DEPTH, AnalysisResult, EngineManager, EngineUnavailable
 from app.services.engine.uci import MATE_CP
 from app.services.rules import xiangqi as rules
+
+log = logging.getLogger(__name__)
 
 MATE_CLAMP_CP = 2000
 COUNTERATTACK_CP = 150
@@ -58,6 +63,7 @@ class MoveEvaluation(BaseModel):
     notes: list[str]
     before: AnalysisResult
     after: AnalysisResult
+    explanation: MoveExplanation | None = None  # plain-language facts; None if they could not be derived
 
 
 def _piece_at(fen: str, sq: str) -> str | None:
@@ -138,7 +144,21 @@ async def evaluate_move(manager: EngineManager, fen_before: str, move: str, dept
     if before.warnings or after.warnings:
         notes.append("Đã loại bỏ nước đi không hợp lệ trong biến của engine.")
 
+    # The opponent's intent: their best move if it were their turn in the position before the player's move.
+    intent = None
+    null_fen = null_move_fen(fen_before)
+    if null_fen is not None:
+        threat = await manager.analyze(null_fen, depth=depth, multipv=1)
+        intent = threat.best_move or (threat.lines[0].pv[0] if threat.lines and threat.lines[0].pv else None)
+    best_line = b.pv or ([before.best_move] if before.best_move else [])
+    try:
+        explanation = explain(fen_before, move, best_line, pv[0] if pv else None, intent)
+    except (rules.FenError, rules.IllegalMoveError):
+        log.warning("move explanation failed", extra={"move": move})
+        explanation = None
+
     return MoveEvaluation(
+        explanation=explanation,
         eval_before_cp=before_cp,
         eval_after_cp=after_cp,
         best_move=before.best_move or b.pv[0],

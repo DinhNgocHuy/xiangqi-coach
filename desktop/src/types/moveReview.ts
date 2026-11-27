@@ -13,6 +13,20 @@ export type SelfAssessment = {
   skipped: boolean;
 };
 
+/** Plain-language facts from the backend (rules + Pikafish), moves in Vietnamese notation. */
+export type MoveExplanation = {
+  player_move: string;
+  player_reasons: string[];
+  best_move: string;
+  best_reasons: string[];
+  best_line: string[];
+  opponent_reply: string | null;
+  opponent_reply_reasons: string[];
+  opponent_intent: string | null;
+  opponent_intent_reasons: string[];
+  intent_handled: boolean | null;
+};
+
 export type EngineAnalysis = {
   source: "pikafish" | "sample";
   eval_before_cp: number; // both evals from the mover's perspective, + = good for player
@@ -26,6 +40,7 @@ export type EngineAnalysis = {
   cp_loss?: number;
   eval_before_mate?: number | null; // moves to mate, > 0 = player mates, 0 = mate delivered
   eval_after_mate?: number | null;
+  explanation?: MoveExplanation | null;
 };
 
 export type PlayedMove = {
