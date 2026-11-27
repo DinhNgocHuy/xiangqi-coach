@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type RefObject } from "react";
 import type { SessionState } from "../hooks/useSession";
 import { INITIAL_STABILITY, observeFrame } from "../services/autoMonitor";
 import { BackendError, Cancelled, api, errorText } from "../services/backend";
+import { START_FEN, START_PLACEMENT } from "../services/board";
 import { grabFrameBlob } from "../services/screenCapture";
 import type { BoardResult, Orientation, Placement, PositionResult } from "../types/api";
 import { BoardEditor } from "./BoardEditor";
@@ -9,6 +10,7 @@ import { BoardEditor } from "./BoardEditor";
 export const AUTO_INTERVAL_MS = 1500;
 const btn = "rounded-md px-3 py-1.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-40";
 const RESULT = { recorded: "Đã ghi nước đi", unchanged: "Thế cờ không đổi", inconsistent: "Không khớp với ván đang theo dõi" } as const;
+const NEED_START = "Chưa hiệu chỉnh quân cờ: hãy mở một ván mới (thế cờ ban đầu, đủ 32 quân), app sẽ tự hiệu chỉnh.";
 const ORIENT: Record<Orientation, string> = { red_bottom: "Đỏ ở dưới", red_top: "Đen ở dưới" };
 
 /** Calibrate, recognise, auto-track and confirm positions. Frames go to the local backend only, in memory. */
@@ -106,7 +108,7 @@ export function TrackingPanel({ videoRef, sharing, s, onOrientation }: {
   // Auto-tracking: one frame every AUTO_INTERVAL_MS, skipped while the previous request is still running.
   // Teardown (toggle off, page leave, session change, manual action) aborts the in-flight frame: it never records.
   useEffect(() => {
-    if (!auto || !sharing || !sessionId || busy) return;
+    if (!auto || !sharing || busy) return;
     const ctrl = new AbortController();
     const { signal } = ctrl;
     let pending = false;
@@ -116,9 +118,30 @@ export function TrackingPanel({ videoRef, sharing, s, onOrientation }: {
       try {
         const frame = await grabFrameBlob(videoRef.current);
         if (signal.aborted) return;
-        const r = await api.readBoard(frame.blob, signal);
+        let r: BoardResult;
+        try {
+          r = await api.readBoard(frame.blob, signal);
+        } catch (e) {
+          if (!(e instanceof BackendError && e.status === 409)) throw e;
+          // Not calibrated yet: calibrate from this frame. Only the starting position (422 otherwise) works.
+          const c = await api.calibrate(frame.blob).catch((err) => {
+            if (err instanceof BackendError && err.status === 422) return null;
+            throw err;
+          });
+          if (signal.aborted) return;
+          if (!c) return setError(NEED_START);
+          latest.current.onOrientation(c.orientation);
+          setInfo(`Đã tự hiệu chỉnh quân cờ (${ORIENT[c.orientation]}, ô ${c.grid.cell}px).`);
+          return setError(null);
+        }
         if (signal.aborted) return;
         showBoard(r);
+        // No active session: start one as soon as the board shows the starting position (a new game).
+        const cur = latest.current.s;
+        if (cur.session?.status !== "active") {
+          if (r.fen_placement === START_PLACEMENT && !cur.busy) await cur.create(START_FEN, r.orientation === "red_top" ? "b" : "w");
+          return;
+        }
         const step = observeFrame(stability.current, r);
         stability.current = step.state;
         if (step.submit) {
@@ -153,10 +176,10 @@ export function TrackingPanel({ videoRef, sharing, s, onOrientation }: {
         <button onClick={calibrate} disabled={!sharing || busy || auto} className={`${btn} bg-amber-700 hover:bg-amber-600`}>Hiệu chỉnh (thế cờ ban đầu)</button>
         <button onClick={recognize} disabled={!sharing || busy || auto} className={`${btn} bg-sky-700 hover:bg-sky-600`}>Nhận diện bàn cờ</button>
         <label className="flex items-center gap-2 text-sm text-slate-300">
-          <input type="checkbox" checked={auto} disabled={!sharing || !sessionId} onChange={(e) => setAuto(e.target.checked)} />
+          <input type="checkbox" checked={auto} disabled={!sharing} onChange={(e) => setAuto(e.target.checked)} />
           Theo dõi tự động
         </label>
-        {!sessionId && <span className="text-xs text-slate-500">Cần một buổi tập đang diễn ra để ghi nước đi.</span>}
+        {auto && !sessionId && <span className="text-xs text-slate-500">Đang chờ bàn cờ ở thế ban đầu để tự tạo buổi tập.</span>}
       </div>
 
       {error && <p role="alert" className="text-sm text-red-300">{error}</p>}

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { SAMPLE_MOVES } from "../data/sampleMoves";
 import type { EngineAnalysis, PlayedMove, SelfAssessment } from "../types/moveReview";
 import type { MoveEvaluation } from "../types/api";
-import { buildMoveReview, evalText, fromEvaluation, mateChange, moveQuality, thinkingComponents, thinkingScore } from "./moveReview";
+import { buildMoveReview, evalText, fromEvaluation, mateChange, movePoints, moveQuality, thinkingComponents, thinkingScore } from "./moveReview";
 
 const engine = (over: Partial<EngineAnalysis> = {}): EngineAnalysis => ({
   source: "pikafish",
@@ -312,5 +312,22 @@ describe("mateChange", () => {
     const r = buildMoveReview("s", played(e([-29997, -3], [-29998, -2], 0)), full);
     expect(r.learning_notes[0]).toBe("Thế cờ thay đổi từ bị chiếu hết sau 3 nước thành bị chiếu hết sau 2 nước (vẫn đang bị đối thủ chiếu hết).");
     expect(moveQuality(e([-29997, -3], [-29998, -2], 0)).label).toBe("Rất tốt");
+  });
+});
+
+describe("movePoints", () => {
+  it("praises the engine's best move with no threats left", () => {
+    const p = movePoints(engine({ threats: { check: false, capture: false, counterattack: false }, material_at_risk: false }), "h2e2");
+    expect(p.pros).toEqual(["Trùng với nước tốt nhất của engine.", "Không để lại nguy cơ bị chiếu, bị bắt quân hay bị phản công."]);
+    expect(p.cons).toEqual([]);
+  });
+  it("lists the loss, best move and hanging material", () => {
+    const p = movePoints(engine({ cp_loss: 180, threats: { check: true, capture: true, counterattack: false } }), "b2b9");
+    expect(p.pros).toEqual([]);
+    expect(p.cons).toEqual(["Kém nước tốt nhất h2e2 khoảng 180 điểm.", "Sau nước này đối thủ có nước chiếu.", "Có quân của bạn có thể bị bắt mất."]);
+  });
+  it("reports a missed mate instead of a raw mate-mapped loss", () => {
+    const p = movePoints(engine({ eval_before_cp: 29990, eval_before_mate: 5, eval_after_cp: 300, cp_loss: 29690, material_at_risk: false }), "b2b9");
+    expect(p.cons).toEqual(["Nước đi bỏ lỡ đường chiếu hết."]);
   });
 });

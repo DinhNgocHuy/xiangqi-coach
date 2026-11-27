@@ -289,3 +289,23 @@ export function buildMoveReview(sessionId: string, played: PlayedMove, sa: SelfA
     self_assessment: sa,
   };
 }
+
+/**
+ * Strengths / weaknesses of the move itself, from verified engine data only (works without a self-assessment).
+ * Every move named comes from the engine or the player.
+ */
+export function movePoints(e: EngineAnalysis, playerMove: string): { pros: string[]; cons: string[] } {
+  const pros: string[] = [];
+  const cons: string[] = [];
+  const loss = Math.max(0, e.cp_loss ?? e.eval_before_cp - e.eval_after_cp);
+  const change = mateChange(e);
+  if (change) (change.decisive || e.eval_after_cp < 0 ? cons : pros).push(`Nước đi ${change.text}.`);
+  if (norm(playerMove) === norm(e.best_move)) pros.push("Trùng với nước tốt nhất của engine.");
+  else if (loss <= 20) pros.push(`Gần ngang nước tốt nhất của engine (${e.best_move}).`);
+  else if (!change?.decisive) cons.push(`Kém nước tốt nhất ${e.best_move} khoảng ${loss} điểm.`);
+  if (e.threats.check) cons.push("Sau nước này đối thủ có nước chiếu.");
+  if (e.material_at_risk) cons.push("Có quân của bạn có thể bị bắt mất.");
+  if (e.threats.counterattack) cons.push("Đối thủ có cơ hội phản công.");
+  if (!e.threats.check && !e.threats.capture && !e.threats.counterattack) pros.push("Không để lại nguy cơ bị chiếu, bị bắt quân hay bị phản công.");
+  return { pros, cons };
+}

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { LiveReview } from "../components/LiveReview";
 import { SessionPanel } from "../components/SessionPanel";
 import { StatusBadge } from "../components/StatusBadge";
 import { TrackingPanel } from "../components/TrackingPanel";
@@ -74,6 +75,8 @@ export function ScreenMonitorPage({ capture, session }: { capture: ScreenCapture
         <SessionPanel s={session} defaultSide={orientation === "red_top" ? "b" : "w"} />
         <TrackingPanel videoRef={videoRef} sharing={sharing} s={session} onOrientation={setOrientation} />
       </div>
+
+      <LiveReview s={session} />
 
       <div className="grid gap-6 lg:grid-cols-2">
         <section className="rounded-lg border border-slate-800 bg-slate-900 p-3">
