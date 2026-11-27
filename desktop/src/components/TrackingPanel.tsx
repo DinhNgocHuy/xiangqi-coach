@@ -7,6 +7,7 @@ import { grabFrameBlob } from "../services/screenCapture";
 import type { BoardResult, Orientation, Placement, PositionResult } from "../types/api";
 import { BoardEditor } from "./BoardEditor";
 
+const BAD_FRAMES = 4; // ~3 s
 export const AUTO_INTERVAL_MS = 800; // a bot replies within ~1 s; recognition takes ~200 ms
 const btn = "rounded-md px-3 py-1.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-40";
 const RESULT = { recorded: "Đã ghi nước đi", unchanged: "Thế cờ không đổi", inconsistent: "Không khớp với ván đang theo dõi" } as const;
@@ -29,6 +30,7 @@ export function TrackingPanel({ videoRef, sharing, s, onOrientation }: {
   const [info, setInfo] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const stability = useRef(INITIAL_STABILITY);
+  const bad = useRef(0); // incomplete frames in a row (auto mode)
   const latest = useRef({ s, onOrientation });
   latest.current = { s, onOrientation };
 
@@ -159,7 +161,10 @@ export function TrackingPanel({ videoRef, sharing, s, onOrientation }: {
           return setError(null);
         }
         if (signal.aborted) return;
-        showBoard(r);
+        // A piece mid-animation or a move highlight makes single frames uncertain; those are skipped anyway,
+        // so their problems are only shown once they last (BAD_FRAMES in a row), e.g. a covered board.
+        bad.current = r.fen_placement ? 0 : bad.current + 1;
+        if (r.fen_placement || bad.current >= BAD_FRAMES) showBoard(r);
         // No active session: start one as soon as the board shows the starting position (a new game).
         const cur = latest.current.s;
         if (cur.session?.status !== "active") {
