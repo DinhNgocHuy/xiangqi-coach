@@ -1,0 +1,7 @@
+# Pikafish binary + NNUE are downloaded per machine, never committed (GPL-3.0, large files)
+engine/pikafish/
+# Local user data (SQLite, exports)
+data/
+# PyInstaller outputs
+backend/build/
+backend/dist/

@@ -1,0 +1,13 @@
+{
+  "bundle": {
+    "resources": {
+      "../../backend/dist/xqc-backend/": "backend/",
+      "../../backend/dist/licenses/": "licenses/",
+      "../../engine/pikafish/pikafish.exe": "pikafish/pikafish.exe",
+      "../../engine/pikafish/pikafish.nnue": "pikafish/pikafish.nnue",
+      "../../engine/pikafish/Copying.txt": "pikafish/Copying.txt",
+      "../../engine/pikafish/NNUE-License.md": "pikafish/NNUE-License.md",
+      "../../engine/pikafish/SOURCE.txt": "pikafish/SOURCE.txt"
+    }
+  }
+}
